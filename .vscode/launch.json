@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Debug FastAPI (uvicorn)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "app.api:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000"
+                ],
+            "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "INFO",
+                "LOG_PATH": "logs/serviceA.log",
+                // "MARKET_BASE_URL": "https://market.example.com",
+                // "FILE_BASE_URL": "https://files.example.com",
+                // "UPLOAD_BASE_URL": "https://uploadservice.example.com",
+                // "WORKFLOW_BASE_URL": "https://parseservice.example.com",
+                // "EXTERNAL_API_KEY": "your_api_key"
+                },
+            "jinja": true
+        }
+    ]
+}
