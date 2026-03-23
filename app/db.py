@@ -36,6 +36,8 @@ def init_db():
         file_name TEXT,
         file_id TEXT,
         file_url TEXT,
+        pdf_path TEXT,
+        markdown_path TEXT,
         file_upload_id TEXT,
         preview_url TEXT,
         parse_text TEXT,
@@ -54,6 +56,10 @@ def init_db():
         cur.execute("ALTER TABLE contracts ADD COLUMN file_upload_id TEXT")
     if "preview_url" not in cols:
         cur.execute("ALTER TABLE contracts ADD COLUMN preview_url TEXT")
+    if "pdf_path" not in cols:
+        cur.execute("ALTER TABLE contracts ADD COLUMN pdf_path TEXT")
+    if "markdown_path" not in cols:
+        cur.execute("ALTER TABLE contracts ADD COLUMN markdown_path TEXT")
     conn.commit()
     conn.close()
     logger.info("initialized db at %s", DB_PATH)
@@ -73,15 +79,18 @@ def _exec(sql: str, params=()):
 
 def upsert_contract(contract: Dict[str, Any]):
     now = _now()
+    contract_code = contract.get("contract_id") or contract.get("Code") or contract.get("code") or contract.get("Name")
+    file_name = contract.get("file_name") or contract.get("Name") or contract.get("name")
+    file_id = contract.get("file_id") or contract.get("Code") or contract.get("code")
     sql = """
     INSERT INTO contracts (contract_id, file_name, file_id, file_url, status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(contract_id) DO UPDATE SET file_name=excluded.file_name, file_id=excluded.file_id, file_url=excluded.file_url, updated_at=excluded.updated_at
     """
     params = (
-        contract.get("contract_id"),
-        contract.get("file_name"),
-        contract.get("file_id"),
+        contract_code,
+        file_name,
+        file_id,
         contract.get("file_url"),
         "pending",
         now,
@@ -113,6 +122,12 @@ def update_status(contract_id: str, status: str, **kwargs):
     if "preview_url" in kwargs:
         fields.append("preview_url = ?")
         params.append(kwargs["preview_url"])
+    if "pdf_path" in kwargs:
+        fields.append("pdf_path = ?")
+        params.append(kwargs["pdf_path"])
+    if "markdown_path" in kwargs:
+        fields.append("markdown_path = ?")
+        params.append(kwargs["markdown_path"])
     if "increment_attempt" in kwargs and kwargs["increment_attempt"]:
         fields.append("attempts = attempts + 1")
 

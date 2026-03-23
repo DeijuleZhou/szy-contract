@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     LOG_MAX_BYTES: int = 10 * 1024 * 1024
     LOG_BACKUP_COUNT: int = 5
 
+    # Minio 存储配置
+    MINIO_ENDPOINT: str = "127.0.0.1:9000"  # 可通过环境变量覆盖
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "contracts"
+    MINIO_SECURE: bool = False
+
 
 settings = Settings()
 

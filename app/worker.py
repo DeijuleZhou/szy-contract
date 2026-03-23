@@ -11,7 +11,7 @@ logger = logging.getLogger("app.worker")
 semaphore = asyncio.Semaphore(settings.CONCURRENCY)
 
 async def process_single(contract: Dict):
-    contract_id = contract["Name"]
+    contract_id = contract.get("Code") or contract.get("code") or contract.get("Name")
     logger.info("start processing contract %s", contract_id)
     await db.aupsert_contract(contract)
     logger.debug("upserted contract %s", contract_id)
@@ -53,11 +53,22 @@ async def process_single(contract: Dict):
         if isinstance(parse_res, dict):
             text = parse_res.get("text")
             upload_id = parse_res.get("upload_file_id")
+            pdf_path = parse_res.get("pdf_path")
+            markdown_path = parse_res.get("markdown_path")
         else:
             text = parse_res
             upload_id = None
+            pdf_path = None
+            markdown_path = None
         logger.info("parse result for %s upload_id=%s text_len=%s", contract_id, upload_id, (len(text) if text else 0))
-        await db.aupdate_status(contract_id, "ai_pending", parse_text=text, file_upload_id=upload_id)
+        await db.aupdate_status(
+            contract_id,
+            "ai_pending",
+            parse_text=text,
+            file_upload_id=upload_id,
+            pdf_path=pdf_path,
+            markdown_path=markdown_path,
+        )
 
         # 解析服务已可能返回结构化 ai_result，直接保存；若无则保持为空
         ai_result = None
