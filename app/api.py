@@ -6,10 +6,50 @@ from .worker import start_background, retry_contract
 import asyncio
 import re
 import logging
+import httpx
+
+from pydantic import BaseModel
 
 logger = logging.getLogger("app.api")
 
 app = FastAPI(title="Service")
+
+
+class ParserUrlPayload(BaseModel):
+    url: str
+
+
+@app.post("/parser/v1/parser/url")
+async def parser_url(payload: ParserUrlPayload):
+    """接收 PDF 链接，将 PDF 下载后以 form-data 转发到外部解析服务，返回解析接口的 content_list.json 字段。"""
+    file_url = payload.url
+    if not file_url:
+        raise HTTPException(status_code=400, detail="missing url")
+
+    parser_api = settings.PARSER_API_URL
+    async with httpx.AsyncClient(timeout=settings.HTTP_TIMEOUT) as client:
+        try:
+            r = await client.get(file_url)
+            r.raise_for_status()
+            content = r.content
+        except Exception as e:
+            logging.exception("failed to download pdf %s", file_url)
+            raise HTTPException(status_code=502, detail=f"failed to download file: {e}")
+
+        filename = file_url.split("/")[-1] or "file.pdf"
+        files = {"file": (filename, content, "application/pdf")}
+        try:
+            resp = await client.post(parser_api, files=files)
+            resp.raise_for_status()
+            j = resp.json()
+            result = j.get("data", {}).get("content_list.json")
+            return {"result": result}
+        except httpx.HTTPStatusError as e:
+            logging.exception("parser API error %s", parser_api)
+            raise HTTPException(status_code=502, detail=f"parser api error: {e}")
+        except Exception as e:
+            logging.exception("parser proxy failed")
+            raise HTTPException(status_code=502, detail=str(e))
 
 @app.on_event("startup")
 async def startup():

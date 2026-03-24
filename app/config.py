@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "contracts"
     MINIO_SECURE: bool = False
 
+    # External parser endpoint (used by /parser/v1/parser/url)
+    PARSER_API_URL: str = "http://10.40.88.55:31838/parser/v1/parser"
+
     # MySQL 配置（若启用 MySQL 则使用 MySQL；否则保留 SQLite）
     USE_MYSQL: bool = True
     MYSQL_HOST: str = "127.0.0.1"
