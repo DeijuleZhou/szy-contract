@@ -1,6 +1,7 @@
 marker-pdf==1.10.2
 openai>=0.27.0
 minio>=7.2.7
+PyMySQL>=1.0.2
 fastapi
 uvicorn[standard]
 httpx

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Dict
 from .config import settings
 from . import db
@@ -49,7 +50,7 @@ async def process_single(contract: Dict):
 
         # 调用解析服务 B（先上传再触发 workflow），得到文本与 upload_file_id
         logger.info("calling parse service for %s", contract_id)
-        parse_res = await external.parse_file_by_serviceB(file_url)
+        parse_res = await external.parse_file_by_serviceB(file_url, contract_code=contract.get("Code"))
         if isinstance(parse_res, dict):
             text = parse_res.get("text")
             upload_id = parse_res.get("upload_file_id")
@@ -64,7 +65,7 @@ async def process_single(contract: Dict):
         await db.aupdate_status(
             contract_id,
             "ai_pending",
-            parse_text=text,
+            # parse_text=text,
             file_upload_id=upload_id,
             pdf_path=pdf_path,
             markdown_path=markdown_path,
@@ -72,10 +73,24 @@ async def process_single(contract: Dict):
 
         # 解析服务已可能返回结构化 ai_result，直接保存；若无则保持为空
         ai_result = None
+        overview_text = None
+        signing_date = None
+        project_category = None
         if isinstance(parse_res, dict):
             ai_result = parse_res.get("ai_result")
+            if isinstance(ai_result, dict):
+                overview_text = _serialize_contract_overview(ai_result.get("contract_overview"))
+                signing_date = _normalize_signing_date(ai_result.get("signing_date"))
+                project_category = _clean_text(ai_result.get("project_category"))
         logger.info("saving ai_result for %s", contract_id)
-        await db.aupdate_status(contract_id, "done", ai_result=ai_result)
+        await db.aupdate_status(
+            contract_id,
+            "done",
+            ai_result=ai_result,
+            contract_overview=overview_text,
+            signing_date=signing_date,
+            project_category=project_category,
+        )
         logger.info("finished processing contract %s", contract_id)
     except Exception as e:
         logger.exception("error processing contract %s: %s", contract_id, e)
@@ -125,3 +140,48 @@ if __name__ == "__main__":
         print("done")
 
     asyncio.run(main())
+
+
+def _serialize_contract_overview(data):
+    if not isinstance(data, dict):
+        return None
+    preferred_order = [
+        "项目工程规模",
+        "估算总投资",
+        "工程建安费",
+        "工程设计费",
+        "支付方式",
+    ]
+    parts = []
+    for key in preferred_order:
+        value = data.get(key)
+        if value:
+            parts.append(f"{key}:{str(value).strip()}")
+    for key, value in data.items():
+        if key in preferred_order:
+            continue
+        if value:
+            parts.append(f"{key}:{str(value).strip()}")
+    return " | ".join(parts) if parts else None
+
+
+def _normalize_signing_date(value):
+    if not value or not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    candidates = ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"]
+    for fmt in candidates:
+        try:
+            return datetime.strptime(text[:10], fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _clean_text(value):
+    if not value or not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None

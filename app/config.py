@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "contracts"
     MINIO_SECURE: bool = False
 
+    # MySQL 配置（若启用 MySQL 则使用 MySQL；否则保留 SQLite）
+    USE_MYSQL: bool = True
+    MYSQL_HOST: str = "127.0.0.1"
+    MYSQL_PORT: int = 3306
+    MYSQL_USER: str = "whsz"
+    MYSQL_PASSWORD: str = "whsz"
+    MYSQL_DB: str = "szy_contracts"
+
 
 settings = Settings()
 

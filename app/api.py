@@ -32,9 +32,13 @@ async def start_job(background_tasks: BackgroundTasks, limit: int = 50, query: D
 
     if contract_type:
         safe = re.sub(r"[^0-9A-Za-z_-]", "_", str(contract_type)).lower()
-        db_path = f"data/contracts_{safe}.db"
-        db.set_db_path(db_path)
-        # ensure DB initialized for this path before background tasks run
+        # set current contract type so DB layer uses per-type table (MySQL) or per-file sqlite if still used
+        db.set_contract_type(safe)
+        # if using sqlite fallback, create a dedicated DB file
+        if not settings.USE_MYSQL:
+            db_path = f"data/contracts_{safe}.db"
+            db.set_db_path(db_path)
+        # ensure DB/table initialized for this type before background tasks run
         await db.ainit_db()
 
     if loop:

@@ -1,13 +1,22 @@
 import httpx
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .config import settings
 import logging
 import json
 import os
-from io import BytesIO
 from pathlib import Path
 import re
+from .marker_pdf.marker import parse
+
+PARSE_SERIAL_LOCK: Optional[asyncio.Lock] = None
+
+
+def _get_parse_serial_lock() -> asyncio.Lock:
+    global PARSE_SERIAL_LOCK
+    if PARSE_SERIAL_LOCK is None:
+        PARSE_SERIAL_LOCK = asyncio.Lock()
+    return PARSE_SERIAL_LOCK
 
 from .storage_minio import upload_bytes
 
@@ -98,132 +107,111 @@ async def get_file_url(attachment_names: List[str]) -> Dict[str, Dict[str, str]]
     return out
 
 
-async def parse_file_by_serviceB(file_url: str) -> Dict[str, Any]:
-    """下载 PDF -> 使用 marker-pdf 转为 markdown ->
-    将 PDF 和 markdown 存入 Minio -> 调用 workflow/run(query=markdown)。
+async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = None) -> Dict[str, Any]:
+    """串行执行：下载 PDF -> 本地保存 -> marker.parse -> 上传/调用 workflow。"""
 
-    返回字典：{"text": ..., "upload_file_id": None, "ai_result": ..., "pdf_path": ..., "markdown_path": ...}
-    """
+    lock = _get_parse_serial_lock()
+    async with lock:
+        async with await _client() as client:
+            # 1) 下载文件内容
+            try:
+                async with client.stream("GET", file_url) as r:
+                    r.raise_for_status()
+                    content = await r.aread()
+            except Exception:
+                logger.exception("failed to download file %s", file_url)
+                return {"text": f"[PARSE-ERROR] 无法下载文件：{file_url}", "upload_file_id": None}
 
-    async with await _client() as client:
-        # 1) 下载文件内容
-        try:
-            async with client.stream("GET", file_url) as r:
-                r.raise_for_status()
-                content = await r.aread()
-        except Exception:
-            logger.exception("failed to download file %s", file_url)
-            return {"text": f"[PARSE-ERROR] 无法下载文件：{file_url}", "upload_file_id": None}
+        # 2) 将 PDF 保存到本地 example 目录，并使用 marker.parse 生成 markdown
+        filename = file_url.split("/")[-1] or "file.pdf"
+        name_no_ext = os.path.splitext(filename)[0]
+        safe_name_source = contract_code or name_no_ext
+        safe_name = re.sub(r"[^0-9A-Za-z_.-]", "_", safe_name_source) or "file"
 
-    # 2) 上传原始 PDF 到 Minio，文件名用简短 Name.pdf
-    filename = file_url.split("/")[-1] or "file.pdf"
-    # 简化文件名，去除复杂字符
-    name_no_ext = os.path.splitext(filename)[0]
-    safe_name = re.sub(r"[^0-9A-Za-z_.-]", "_", name_no_ext) or "file"
-    pdf_object_name = f"pdf/{safe_name}.pdf"
-    loop = asyncio.get_running_loop()
-    pdf_path = await loop.run_in_executor(None, upload_bytes, content, pdf_object_name, "application/pdf")
+        project_root = Path(__file__).resolve().parents[1]
+        example_dir = project_root / "example"
+        example_dir.mkdir(parents=True, exist_ok=True)
+        pdf_local_path = example_dir / f"{safe_name}.pdf"
+        pdf_local_path.write_bytes(content)
 
-    # 3) 使用 marker-pdf 将 PDF 内容转为 markdown（本地模型）
-    def _convert_to_markdown(data: bytes) -> str:
-        # 延迟导入，避免应用启动时加载重模型
-        from marker.converters.pdf import PdfConverter
-        from marker.models import create_model_dict
-        from marker.config.parser import ConfigParser
-        from marker.output import text_from_rendered
+        output_dir = example_dir / "markdown"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, parse, str(pdf_local_path), str(output_dir))
 
-        base_dir = Path(__file__).resolve().parents[1]
-        model_dir = os.environ.get("SURYA_MODEL_DIR") or os.environ.get("MARKER_CACHE_DIR") or str(base_dir / "models")
-        os.environ["SURYA_MODEL_DIR"] = model_dir
-        os.environ["MARKER_CACHE_DIR"] = model_dir
+        markdown_file = output_dir / f"{safe_name}.md"
+        markdown_text = markdown_file.read_text(encoding="utf-8")
 
-        cfg = {
-            "output_format": "markdown",
-            "use_llm": False,
-            "model_dir": model_dir,
-        }
-        config_parser = ConfigParser(cfg)
-        converter_cls = config_parser.get_converter_cls()
-        models = create_model_dict()
-        converter = converter_cls(
-            config=config_parser.generate_config_dict(),
-            artifact_dict=models,
-            processor_list=config_parser.get_processors(),
-            renderer=config_parser.get_renderer(),
-            llm_service=config_parser.get_llm_service(),
-        )
-        rendered = converter(BytesIO(data))
-        try:
-            return rendered.markdown
-        except AttributeError:
-            text, _, _ = text_from_rendered(rendered)
-            return text
+        # 3) 上传原始 PDF 到 Minio
+        pdf_object_name = f"pdf/{safe_name}.pdf"
+        pdf_path = await loop.run_in_executor(None, upload_bytes, content, pdf_object_name, "application/pdf")
 
-    markdown_text = await loop.run_in_executor(None, _convert_to_markdown, content)
+        # 4) 将 markdown 存入 Minio
+        md_object_name = f"markdown/{safe_name}.md"
+        markdown_bytes = (markdown_text or "").encode("utf-8")
+        markdown_path = await loop.run_in_executor(None, upload_bytes, markdown_bytes, md_object_name, "text/markdown")
 
-    # 4) 将 markdown 存入 Minio
-    md_object_name = f"markdown/{safe_name}.md"
-    markdown_bytes = (markdown_text or "").encode("utf-8")
-    markdown_path = await loop.run_in_executor(None, upload_bytes, markdown_bytes, md_object_name, "text/markdown")
-
-    # 5) 调用 workflow/run，输入为 markdown 全文
-    async with await _client() as client:
-        run_url = f"{settings.WORKFLOW_BASE_URL.rstrip('/')}{settings.WORKFLOW_RUN_PATH}"
-        payload = {
-            "inputs": {
-                "query": markdown_text or "",
-            },
-            "response_mode": "blocking",
-        }
-        try:
-            resp = await client.post(run_url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception:
-            logger.exception("workflow run failed %s", run_url)
-            return {
-                "text": f"[PARSE-ERROR] workflow 调用失败",
-                "upload_file_id": None,
-                "ai_result": None,
-                "pdf_path": pdf_path,
-                "markdown_path": markdown_path,
+        # 5) 调用 workflow/run，输入为 markdown 全文
+        async with await _client() as client:
+            if markdown_text and len(markdown_text) > 10000:
+                markdown_text = re.sub(r"\n{20,}", "\n", markdown_text)
+                markdown_text = re.sub(r" {20,}", " ", markdown_text)
+            run_url = f"{settings.WORKFLOW_BASE_URL.rstrip('/')}{settings.WORKFLOW_RUN_PATH}"
+            payload = {
+                "inputs": {
+                    "query": markdown_text or "",
+                },
+                "response_mode": "blocking",
             }
+            try:
+                resp = await client.post(run_url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception:
+                logger.exception("workflow run failed %s", run_url)
+                return {
+                    "text": f"[PARSE-ERROR] workflow 调用失败",
+                    "upload_file_id": None,
+                    "ai_result": None,
+                    "pdf_path": pdf_path,
+                    "markdown_path": markdown_path,
+                }
 
-    # 从返回结果中抽取文本（逻辑保持不变）
-    text = None
-    if isinstance(data, dict):
-        try:
-            text = (
-                data.get("data", {})
-                .get("outputs", {})
-                .get("output", {})
-                .get("answer")
-            )
-        except Exception:
-            logger.exception("failed to parse workflow response")
+        # 从返回结果中抽取文本（逻辑保持不变）
+        text = None
+        if isinstance(data, dict):
+            try:
+                text = (
+                    data.get("data", {})
+                    .get("outputs", {})
+                    .get("output", {})
+                    .get("answer")
+                )
+            except Exception:
+                logger.exception("failed to parse workflow response")
 
-    # text 为字符串化的 json，将其序列化为 json
-    ai_result = None
-    if isinstance(text, str):
-        try:
-            ai_result = json.loads(text)
-        except Exception:
-            logger.warning("unable to serialize text to json for file %s", file_url)
+        # text 为字符串化的 json，将其序列化为 json
+        ai_result = None
+        if isinstance(text, str):
+            try:
+                ai_result = json.loads(text)
+            except Exception:
+                logger.warning("unable to serialize text to json for file %s", file_url)
 
-    logger.info(
-        "parse result text_len=%s ai_result_present=%s pdf_path=%s markdown_path=%s",
-        (len(text) if isinstance(text, str) else 0),
-        bool(ai_result),
-        pdf_path,
-        markdown_path,
-    )
+        logger.info(
+            "parse result text_len=%s ai_result_present=%s pdf_path=%s markdown_path=%s",
+            (len(text) if isinstance(text, str) else 0),
+            bool(ai_result),
+            pdf_path,
+            markdown_path,
+        )
 
-    return {
-        "text": text,
-        "upload_file_id": None,
-        "ai_result": ai_result,
-        "pdf_path": pdf_path,
-        "markdown_path": markdown_path,
-    }
+        return {
+            "text": text,
+            "upload_file_id": None,
+            "ai_result": ai_result,
+            "pdf_path": pdf_path,
+            "markdown_path": markdown_path,
+        }
 
 
