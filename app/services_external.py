@@ -124,11 +124,21 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
         }
         async with await _client() as client:
             try:
-                resp = await client.post(run_url, json=payload)
+                # workflow run may take longer than default HTTP_TIMEOUT
+                resp = await client.post(run_url, json=payload, timeout=120.0)
                 resp.raise_for_status()
                 data = resp.json()
-            except Exception:
-                logger.exception("workflow run failed %s", run_url)
+            except Exception as e:
+                # try to log response body/status for troubleshooting
+                body = None
+                status = None
+                try:
+                    if hasattr(e, 'response') and e.response is not None:
+                        status = getattr(e.response, 'status_code', None)
+                        body = e.response.text
+                except Exception:
+                    pass
+                logger.exception("workflow run failed %s status=%s body=%s error=%s", run_url, status, body, e)
                 return {
                     "text": f"[PARSE-ERROR] workflow 调用失败",
                     "upload_file_id": None,
