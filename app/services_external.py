@@ -123,28 +123,41 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
             "response_mode": "blocking",
         }
         async with await _client() as client:
-            try:
-                # workflow run may take longer than default HTTP_TIMEOUT
-                resp = await client.post(run_url, json=payload, timeout=120.0)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as e:
-                # try to log response body/status for troubleshooting
-                body = None
-                status = None
+            # retry logic with exponential backoff
+            max_attempts = max(1, int(getattr(settings, 'RETRY_LIMIT', 3)))
+            attempt = 0
+            delay = 1.0
+            data = None
+            last_exc = None
+            while attempt < max_attempts:
+                attempt += 1
                 try:
-                    if hasattr(e, 'response') and e.response is not None:
-                        status = getattr(e.response, 'status_code', None)
-                        body = e.response.text
-                except Exception:
-                    pass
-                logger.exception("workflow run failed %s status=%s body=%s error=%s", run_url, status, body, e)
-                return {
-                    "text": f"[PARSE-ERROR] workflow 调用失败",
-                    "upload_file_id": None,
-                    "ai_result": None,
-                    "pdf_path": None,
-                }
+                    resp = await client.post(run_url, json=payload, timeout=300.0)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except Exception as e:
+                    last_exc = e
+                    status = None
+                    body = None
+                    try:
+                        if hasattr(e, 'response') and e.response is not None:
+                            status = getattr(e.response, 'status_code', None)
+                            body = e.response.text
+                    except Exception:
+                        pass
+                    logger.warning("workflow run attempt %s/%s failed status=%s body=%s error=%s", attempt, max_attempts, status, body, e)
+                    if attempt < max_attempts:
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, 30)
+                    else:
+                        logger.exception("workflow run failed after %s attempts %s status=%s body=%s error=%s", max_attempts, run_url, status, body, last_exc)
+                        return {
+                            "text": f"[PARSE-ERROR] workflow 调用失败",
+                            "upload_file_id": None,
+                            "ai_result": None,
+                            "pdf_path": None,
+                        }
 
         # 2) 从 workflow 返回中抽取文本/ai_result（逻辑与此前保持一致）
         text = None
