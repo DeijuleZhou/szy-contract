@@ -27,14 +27,14 @@ class Settings(BaseSettings):
     WORKFLOW_RUN_PATH: str = "/workflows/run"
 
     # 可选的 API key，用于需要鉴权的外部服务
-    EXTERNAL_API_KEY: str = "wf-uAG414wnjtxXtEXpOZ7U0fKw"
+    EXTERNAL_API_KEY: str = "wf-8TFne5bCrsWTJ9Ha6JDZ5Dqz"
 
     # HTTP 超时（秒）
     HTTP_TIMEOUT: int = 30
 
     # logging
     LOG_LEVEL: str = "INFO"
-    LOG_PATH: str = "C:\\File\\PycharmProjects\\szy-contract\\logs\\serviceA.log"
+    LOG_PATH: str = "serviceA.log"
     LOG_MAX_BYTES: int = 10 * 1024 * 1024
     LOG_BACKUP_COUNT: int = 5
 

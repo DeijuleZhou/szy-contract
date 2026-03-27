@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
-from .marker_pdf.marker import parse
+from urllib.parse import urlparse
 
 PARSE_SERIAL_LOCK: Optional[asyncio.Lock] = None
 
@@ -108,61 +108,21 @@ async def get_file_url(attachment_names: List[str]) -> Dict[str, Dict[str, str]]
 
 
 async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = None) -> Dict[str, Any]:
-    """串行执行：下载 PDF -> 本地保存 -> marker.parse -> 上传/调用 workflow。"""
+    """新的解析流程：不使用 marker_pdf，直接将来自文件服务的 `file_url` 传给 `/workflows/run`。
+
+    同时为了保留改名后的文件引用，会下载原文件并上传到 Minio（object name 使用可预测命名），
+    上传后返回的 `pdf_path` 为去掉 scheme+host:port 的 path 部分（只保留桶和对象路径）。
+    """
 
     lock = _get_parse_serial_lock()
     async with lock:
+        # 1) 调用 workflow/run，传入 file_url（按 README 要求）
+        run_url = f"{settings.WORKFLOW_BASE_URL.rstrip('/')}{settings.WORKFLOW_RUN_PATH}"
+        payload = {
+            "inputs": {"file_url": file_url},
+            "response_mode": "blocking",
+        }
         async with await _client() as client:
-            # 1) 下载文件内容
-            try:
-                async with client.stream("GET", file_url) as r:
-                    r.raise_for_status()
-                    content = await r.aread()
-            except Exception:
-                logger.exception("failed to download file %s", file_url)
-                return {"text": f"[PARSE-ERROR] 无法下载文件：{file_url}", "upload_file_id": None}
-
-        # 2) 将 PDF 保存到本地 example 目录，并使用 marker.parse 生成 markdown
-        filename = file_url.split("/")[-1] or "file.pdf"
-        name_no_ext = os.path.splitext(filename)[0]
-        safe_name_source = contract_code or name_no_ext
-        safe_name = re.sub(r"[^0-9A-Za-z_.-]", "_", safe_name_source) or "file"
-
-        project_root = Path(__file__).resolve().parents[1]
-        example_dir = project_root / "example"
-        example_dir.mkdir(parents=True, exist_ok=True)
-        pdf_local_path = example_dir / f"{safe_name}.pdf"
-        pdf_local_path.write_bytes(content)
-
-        output_dir = example_dir / "markdown"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, parse, str(pdf_local_path), str(output_dir))
-
-        markdown_file = output_dir / f"{safe_name}.md"
-        markdown_text = markdown_file.read_text(encoding="utf-8")
-
-        # 3) 上传原始 PDF 到 Minio
-        pdf_object_name = f"pdf/{safe_name}.pdf"
-        pdf_path = await loop.run_in_executor(None, upload_bytes, content, pdf_object_name, "application/pdf")
-
-        # 4) 将 markdown 存入 Minio
-        md_object_name = f"markdown/{safe_name}.md"
-        markdown_bytes = (markdown_text or "").encode("utf-8")
-        markdown_path = await loop.run_in_executor(None, upload_bytes, markdown_bytes, md_object_name, "text/markdown")
-
-        # 5) 调用 workflow/run，输入为 markdown 全文
-        async with await _client() as client:
-            if markdown_text and len(markdown_text) > 10000:
-                markdown_text = re.sub(r"\n{20,}", "\n", markdown_text)
-                markdown_text = re.sub(r" {20,}", " ", markdown_text)
-            run_url = f"{settings.WORKFLOW_BASE_URL.rstrip('/')}{settings.WORKFLOW_RUN_PATH}"
-            payload = {
-                "inputs": {
-                    "query": markdown_text or "",
-                },
-                "response_mode": "blocking",
-            }
             try:
                 resp = await client.post(run_url, json=payload)
                 resp.raise_for_status()
@@ -173,11 +133,10 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
                     "text": f"[PARSE-ERROR] workflow 调用失败",
                     "upload_file_id": None,
                     "ai_result": None,
-                    "pdf_path": pdf_path,
-                    "markdown_path": markdown_path,
+                    "pdf_path": None,
                 }
 
-        # 从返回结果中抽取文本（逻辑保持不变）
+        # 2) 从 workflow 返回中抽取文本/ai_result（逻辑与此前保持一致）
         text = None
         if isinstance(data, dict):
             try:
@@ -190,7 +149,6 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
             except Exception:
                 logger.exception("failed to parse workflow response")
 
-        # text 为字符串化的 json，将其序列化为 json
         ai_result = None
         if isinstance(text, str):
             try:
@@ -198,20 +156,44 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
             except Exception:
                 logger.warning("unable to serialize text to json for file %s", file_url)
 
+        # 3) 为了保持存档，下载原始 PDF 并上传到 Minio，生成可控的 object name
+        try:
+            async with await _client() as client:
+                async with client.stream("GET", file_url) as r:
+                    r.raise_for_status()
+                    content = await r.aread()
+        except Exception:
+            logger.exception("failed to download file %s for storage", file_url)
+            # 即使下载失败，也返回 workflow 的解析结果（如果有）
+            return {"text": text, "upload_file_id": None, "ai_result": ai_result, "pdf_path": None}
+
+        filename = file_url.split("/")[-1] or "file.pdf"
+        name_no_ext = os.path.splitext(filename)[0]
+        safe_name_source = contract_code or name_no_ext
+        safe_name = re.sub(r"[^0-9A-Za-z_.-]", "_", safe_name_source) or "file"
+
+        loop = asyncio.get_running_loop()
+        pdf_object_name = f"pdf/{safe_name}.pdf"
+        try:
+            full_pdf_url = await loop.run_in_executor(None, upload_bytes, content, pdf_object_name, "application/pdf")
+        except Exception:
+            logger.exception("failed to upload pdf to storage for %s", file_url)
+            return {"text": text, "upload_file_id": None, "ai_result": ai_result, "pdf_path": None}
+
+        # strip scheme+host:port, keep path (bucket + object)
+        try:
+            parsed = urlparse(full_pdf_url)
+            stripped = parsed.path.lstrip('/')
+        except Exception:
+            stripped = full_pdf_url
+
         logger.info(
-            "parse result text_len=%s ai_result_present=%s pdf_path=%s markdown_path=%s",
+            "parse result text_len=%s ai_result_present=%s pdf_path=%s",
             (len(text) if isinstance(text, str) else 0),
             bool(ai_result),
-            pdf_path,
-            markdown_path,
+            stripped,
         )
 
-        return {
-            "text": text,
-            "upload_file_id": None,
-            "ai_result": ai_result,
-            "pdf_path": pdf_path,
-            "markdown_path": markdown_path,
-        }
+        return {"text": text, "upload_file_id": None, "ai_result": ai_result, "pdf_path": stripped}
 
 

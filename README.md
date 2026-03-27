@@ -124,40 +124,16 @@ uvicorn app.api:app --reload --host 0.0.0.0 --port 8000
 
 3. 解析文件内容（服务B + AI抽取合并）
 
-流程说明：先把文件上传到解析服务（`/file/upload`）得到 `upload_file_id`，再调用 `POST /workflows/run` 触发解析与 AI 抽取。解析服务应返回解析文本以及可选的结构化字段（例如 `entities`、`summary` 或自定义 `outputs`），本服务会把 `upload_file_id`、解析文本与结构化结果存入 `contracts` 表中的 `file_upload_id`、`parse_text`、`ai_result`。
-
-示例：
-
-I. 上传文件，获取 `upload_file_id`
-
-```bash
-curl -X POST 'http://{host}:{port}/file/upload' \
-    --header 'Authorization: Bearer {api_key}' \
-    --form 'files=@"/path/to/file1.pdf"'
-```
-
-示例响应（数组或对象）:
-
-```json
-[{
-    "id": "ddba2e51",
-    "name": "file1.pdf",
-    "url": "https://.../file1.pdf"
-}]
-```
-
-II. 调用 workflow 触发解析与 AI 抽取
 
 ```bash
 curl -X POST 'http://{host}:{port}/workflows/run' \
     --header 'Authorization: Bearer {api_key}' \
     --header 'Content-Type: application/json' \
     --data-raw '{
-        "inputs": {
-            "my_files": [
-                {"type":"pdf","transfer_method":"local_file","url":"","upload_file_id":"ddba2e51"}
-            ]
+        "inputs":{
+            "file_url": "http://10.40.84.6:8060/Uploads/00004258_FileStore/4257837_2021481.pdf"
         },
+        "response_mode": "blocking"
     }'
 ```
 
@@ -165,10 +141,18 @@ curl -X POST 'http://{host}:{port}/workflows/run' \
 
 ```json
 {
-    "outputs": {
-        "text": "解析后的全文文本...",
-        "entities": [{"type":"Party","value":"甲方"}],
-        "summary": "合同要点摘要..."
+    "task_id": "43c7055b-b4d5-4108-ac70-1bd15cd00a88",
+    "workflow_run_id": "7f9af888-94ab-4372-9f17-ad32ffd8e852",
+    "data": {
+        "id": "7f9af888-94ab-4372-9f17-ad32ffd8e852",
+        "workflow_id": "32",
+        "status": "succeeded",
+        "outputs": {
+            "output": {
+                "answer": "{\n  \"contract_overview\": {\n    \"项目工程规模\": \"\",\n    \"估算总投资\": \"\",\n    \"工程建安费\": \"\",\n    \"工程设计费\": \"人民币￥392000.00元\",\n    \"支付方式\": \"分两次支付：提交2021年度正式成果后支付200000.00元；提交2022年度正式成果后付清剩余款项。每次付款前需提供等额发票。\"\n  },\n  \"signing_date\": \"2021-11\",\n  \"project_category\": \"市政工程\"\n}"
+            },
+            "output_type": "stream_direct_return"
+        },
     }
 }
 ```

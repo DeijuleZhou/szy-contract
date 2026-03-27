@@ -74,7 +74,6 @@ def init_db():
         file_id TEXT,
         file_url TEXT,
         pdf_path TEXT,
-        markdown_path TEXT,
         file_upload_id TEXT,
         preview_url TEXT,
         parse_text TEXT,
@@ -98,8 +97,6 @@ def init_db():
         cur.execute("ALTER TABLE contracts ADD COLUMN preview_url TEXT")
     if "pdf_path" not in cols:
         cur.execute("ALTER TABLE contracts ADD COLUMN pdf_path TEXT")
-    if "markdown_path" not in cols:
-        cur.execute("ALTER TABLE contracts ADD COLUMN markdown_path TEXT")
     if "contract_overview" not in cols:
         cur.execute("ALTER TABLE contracts ADD COLUMN contract_overview TEXT")
     if "signing_date" not in cols:
@@ -171,9 +168,6 @@ def update_status(contract_id: str, status: str, **kwargs):
     if "pdf_path" in kwargs:
         fields.append("pdf_path = ?")
         params.append(kwargs["pdf_path"])
-    if "markdown_path" in kwargs:
-        fields.append("markdown_path = ?")
-        params.append(kwargs["markdown_path"])
     if "contract_overview" in kwargs:
         fields.append("contract_overview = ?")
         params.append(kwargs["contract_overview"])
@@ -290,7 +284,6 @@ def mysql_ensure_table(table: str):
         file_id TEXT,
         file_url TEXT,
         pdf_path TEXT,
-        markdown_path TEXT,
         file_upload_id TEXT,
         preview_url TEXT,
         parse_text LONGTEXT,
@@ -347,8 +340,7 @@ def mysql_update_status(contract_id: str, status: str, **kwargs):
         parts.append("preview_url=%s"); params.append(kwargs["preview_url"])
     if "pdf_path" in kwargs:
         parts.append("pdf_path=%s"); params.append(kwargs["pdf_path"])
-    if "markdown_path" in kwargs:
-        parts.append("markdown_path=%s"); params.append(kwargs["markdown_path"])
+    # markdown_path removed; no-op
     if "contract_overview" in kwargs:
         parts.append("contract_overview=%s"); params.append(kwargs["contract_overview"])
     if "signing_date" in kwargs:

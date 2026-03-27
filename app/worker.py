@@ -55,12 +55,10 @@ async def process_single(contract: Dict):
             text = parse_res.get("text")
             upload_id = parse_res.get("upload_file_id")
             pdf_path = parse_res.get("pdf_path")
-            markdown_path = parse_res.get("markdown_path")
         else:
             text = parse_res
             upload_id = None
             pdf_path = None
-            markdown_path = None
         logger.info("parse result for %s upload_id=%s text_len=%s", contract_id, upload_id, (len(text) if text else 0))
         await db.aupdate_status(
             contract_id,
@@ -68,7 +66,6 @@ async def process_single(contract: Dict):
             # parse_text=text,
             file_upload_id=upload_id,
             pdf_path=pdf_path,
-            markdown_path=markdown_path,
         )
 
         # 解析服务已可能返回结构化 ai_result，直接保存；若无则保持为空
