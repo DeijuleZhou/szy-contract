@@ -196,6 +196,16 @@ def get_pending_contracts(limit: int = 100) -> List[Dict[str, Any]]:
     return [dict(zip(keys, r)) for r in rows]
 
 
+def get_attempts_zero_contracts(limit: int = 100) -> List[Dict[str, Any]]:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT contract_id, file_name, file_id, file_url, file_upload_id, preview_url, status, attempts, last_error FROM contracts WHERE attempts = 0 ORDER BY created_at LIMIT ?", (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    keys = ["contract_id", "file_name", "file_id", "file_url", "file_upload_id", "preview_url", "status", "attempts", "last_error"]
+    return [dict(zip(keys, r)) for r in rows]
+
+
 def get_stats() -> Dict[str, int]:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -230,6 +240,13 @@ async def aget_pending_contracts(limit: int = 100):
     if settings.USE_MYSQL:
         return await loop.run_in_executor(None, mysql_get_pending_contracts, limit)
     return await loop.run_in_executor(None, get_pending_contracts, limit)
+
+
+async def aget_attempts_zero_contracts(limit: int = 100):
+    loop = asyncio.get_running_loop()
+    if settings.USE_MYSQL:
+        return await loop.run_in_executor(None, mysql_get_attempts_zero_contracts, limit)
+    return await loop.run_in_executor(None, get_attempts_zero_contracts, limit)
 
 async def aget_stats():
     loop = asyncio.get_running_loop()
@@ -405,6 +422,20 @@ def mysql_get_pending_contracts(limit: int = 100):
     table = _table_name_for(None)
     mysql_ensure_table(table)
     sql = f"SELECT contract_id, file_name, file_id, file_url, file_upload_id, preview_url, status, attempts, last_error FROM {table} WHERE status IN ('pending','failed') ORDER BY created_at LIMIT %s"
+    conn = mysql_connect()
+    cur = conn.cursor()
+    cur.execute(sql, (limit,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    keys = ["contract_id", "file_name", "file_id", "file_url", "file_upload_id", "preview_url", "status", "attempts", "last_error"]
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def mysql_get_attempts_zero_contracts(limit: int = 100):
+    table = _table_name_for(None)
+    mysql_ensure_table(table)
+    sql = f"SELECT contract_id, file_name, file_id, file_url, file_upload_id, preview_url, status, attempts, last_error FROM {table} WHERE attempts = 0 ORDER BY created_at LIMIT %s"
     conn = mysql_connect()
     cur = conn.cursor()
     cur.execute(sql, (limit,))

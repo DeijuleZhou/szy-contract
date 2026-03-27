@@ -2,7 +2,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 from typing import Dict, Any
 from . import db
 from .config import settings
-from .worker import start_background, retry_contract
+from .worker import start_background, retry_contract, _worker_task
 import asyncio
 import re
 import logging
@@ -116,3 +116,23 @@ async def api_retry(contract_id: str):
     loop.create_task(retry_contract(contract_id))
     await db.aupdate_status(contract_id, "pending")
     return {"status": "scheduled", "contract_id": contract_id}
+
+
+@app.post("/reparse/attempts0")
+async def reparse_attempts0(limit: int = 100):
+    """查找 attempts == 0 的合同，调度它们进行解析（非阻塞）。"""
+    items = await db.aget_attempts_zero_contracts(limit)
+    if not items:
+        return {"scheduled": 0}
+    loop = asyncio.get_running_loop()
+    scheduled = 0
+    for item in items:
+        cid = item.get("contract_id")
+        try:
+            # 标记为 pending，以免重复被其他调度再抓取
+            await db.aupdate_status(cid, "pending")
+            loop.create_task(_worker_task(item))
+            scheduled += 1
+        except Exception:
+            logging.exception("failed to schedule contract %s", cid)
+    return {"scheduled": scheduled}

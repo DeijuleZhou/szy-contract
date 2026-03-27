@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     EXTERNAL_API_KEY: str = "wf-8TFne5bCrsWTJ9Ha6JDZ5Dqz"
 
     # HTTP 超时（秒）
-    HTTP_TIMEOUT: int = 30
+    HTTP_TIMEOUT: int = 600
 
     # logging
     LOG_LEVEL: str = "INFO"

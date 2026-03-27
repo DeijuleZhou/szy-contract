@@ -5,3 +5,4 @@ models/
 logs/
 example/
 out/
+parser_service/

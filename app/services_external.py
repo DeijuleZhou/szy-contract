@@ -132,9 +132,10 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
             while attempt < max_attempts:
                 attempt += 1
                 try:
-                    resp = await client.post(run_url, json=payload, timeout=300.0)
+                    resp = await client.post(run_url, json=payload, timeout=600.0)
                     resp.raise_for_status()
                     data = resp.json()
+                    logger.info("workflow run successful for file %s data %s", file_url, data)
                     break
                 except Exception as e:
                     last_exc = e
