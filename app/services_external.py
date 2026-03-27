@@ -36,7 +36,7 @@ async def list_contracts(limit: int = 50, query: Dict | None = None) -> List[Dic
     """
 
     url = f"{settings.MARKET_BASE_URL.rstrip('/')}{settings.MARKET_CONTRACTS_PATH}"
-    logger.info("POST %s payload=%s", url, {k: v for k, v in (query or {}).items() if k != 'queryFormData' or True})
+    # logger.info("POST %s payload=%s", url, {k: v for k, v in (query or {}).items() if k != 'queryFormData' or True})
     async with await _client() as client:
         resp = await client.post(url, json=query or {})
         try:
@@ -71,7 +71,7 @@ async def get_file_url(attachment_names: List[str]) -> Dict[str, Dict[str, str]]
     如果未配置 FILE_BASE_URL 则返回模拟链接。
     """
     url = f"{settings.FILE_BASE_URL.rstrip('/')}{settings.FILE_GET_PATH}"
-    logger.info("POST %s attachments=%s", url, attachment_names)
+    # logger.info("POST %s attachments=%s", url, attachment_names)
     async with await _client() as client:
         # 按 README 要求直接发送数组
         resp = await client.post(url, json=attachment_names)
@@ -210,12 +210,12 @@ async def parse_file_by_serviceB(file_url: str, contract_code: Optional[str] = N
         except Exception:
             stripped = full_pdf_url
 
-        logger.info(
-            "parse result text_len=%s ai_result_present=%s pdf_path=%s",
-            (len(text) if isinstance(text, str) else 0),
-            bool(ai_result),
-            stripped,
-        )
+        # logger.info(
+        #     "parse result text_len=%s ai_result_present=%s pdf_path=%s",
+        #     (len(text) if isinstance(text, str) else 0),
+        #     bool(ai_result),
+        #     stripped,
+        # )
 
         return {"text": text, "upload_file_id": None, "ai_result": ai_result, "pdf_path": stripped}
 

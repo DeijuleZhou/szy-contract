@@ -48,7 +48,7 @@ def upload_bytes(data: bytes, object_name: str, content_type: str) -> str:
             content_type=content_type,
         )
         url = _object_url(object_name)
-        logger.info("uploaded object %s to minio -> %s", object_name, url)
+        # logger.info("uploaded object %s to minio -> %s", object_name, url)
         return url
     except S3Error:
         logger.exception("failed to upload %s to minio", object_name)

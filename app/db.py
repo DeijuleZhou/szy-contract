@@ -140,7 +140,7 @@ def upsert_contract(contract: Dict[str, Any]):
         now,
     )
     _exec(sql, params)
-    logger.debug("upsert_contract %s", contract.get("contract_id"))
+    logger.info("upsert_contract %s", contract.get("contract_id"))
 
 
 def update_status(contract_id: str, status: str, **kwargs):
@@ -183,7 +183,7 @@ def update_status(contract_id: str, status: str, **kwargs):
     sql = f"UPDATE contracts SET {', '.join(fields)} WHERE contract_id = ?"
     params.append(contract_id)
     _exec(sql, tuple(params))
-    logger.debug("update_status %s -> %s", contract_id, status)
+    logger.info("update_status %s -> %s", contract_id, status)
 
 
 def get_pending_contracts(limit: int = 100) -> List[Dict[str, Any]]:
@@ -274,34 +274,48 @@ def mysql_connect():
 
 
 def mysql_ensure_table(table: str):
-    conn = mysql_connect()
-    cur = conn.cursor()
-    sql = f"""
-    CREATE TABLE IF NOT EXISTS {table} (
-        id BIGINT PRIMARY KEY AUTO_INCREMENT,
-        contract_id VARCHAR(255) UNIQUE,
-        file_name TEXT,
-        file_id TEXT,
-        file_url TEXT,
-        pdf_path TEXT,
-        file_upload_id TEXT,
-        preview_url TEXT,
-        parse_text LONGTEXT,
-        ai_result LONGTEXT,
-        contract_overview TEXT,
-        signing_date DATE,
-        project_category TEXT,
-        status TEXT,
-        attempts INTEGER DEFAULT 0,
-        last_error TEXT,
-        created_at TEXT,
-        updated_at TEXT
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """
-    cur.execute(sql)
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = mysql_connect()
+        cur = conn.cursor()
+        sql = f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            id BIGINT PRIMARY KEY AUTO_INCREMENT,
+            contract_id VARCHAR(255) UNIQUE,
+            file_name TEXT,
+            file_id TEXT,
+            file_url TEXT,
+            pdf_path TEXT,
+            file_upload_id TEXT,
+            preview_url TEXT,
+            parse_text LONGTEXT,
+            ai_result LONGTEXT,
+            contract_overview TEXT,
+            signing_date DATE,
+            project_category TEXT,
+            status TEXT,
+            attempts INTEGER DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """
+        logger.debug("mysql_ensure_table executing SQL for %s", table)
+        cur.execute(sql)
+        conn.commit()
+    except Exception as e:
+        logger.exception("mysql_ensure_table failed for %s: %s", table, e)
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
+    else:
+        cur.close()
+        conn.close()
 
 
 def mysql_upsert_contract(contract: Dict[str, Any]):
@@ -314,12 +328,26 @@ def mysql_upsert_contract(contract: Dict[str, Any]):
     now = _now()
     sql = f"INSERT INTO {table} (contract_id, file_name, file_id, file_url, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE file_name=VALUES(file_name), file_id=VALUES(file_id), file_url=VALUES(file_url), updated_at=VALUES(updated_at)"
     params = (contract_code, file_name, file_id, contract.get("file_url"), 'pending', now, now)
-    conn = mysql_connect()
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        logger.debug("mysql_upsert_contract SQL=%s params=%s", sql, params)
+        conn = mysql_connect()
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        conn.commit()
+    except Exception as e:
+        logger.exception("mysql_upsert_contract failed for %s: %s", contract_code, e)
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
+    else:
+        cur.close()
+        conn.close()
 
 
 def mysql_update_status(contract_id: str, status: str, **kwargs):
@@ -351,12 +379,26 @@ def mysql_update_status(contract_id: str, status: str, **kwargs):
         parts.append("attempts = attempts + 1")
     sql = f"UPDATE {table} SET {', '.join(parts)} WHERE contract_id=%s"
     params.append(contract_id)
-    conn = mysql_connect()
-    cur = conn.cursor()
-    cur.execute(sql, tuple(params))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        logger.info("mysql_update_status SQL=%s params=%s", sql, tuple(params))
+        conn = mysql_connect()
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        conn.commit()
+    except Exception as e:
+        logger.exception("mysql_update_status failed for %s: %s", contract_id, e)
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
+    else:
+        cur.close()
+        conn.close()
 
 
 def mysql_get_pending_contracts(limit: int = 100):

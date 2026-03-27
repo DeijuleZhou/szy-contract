@@ -15,7 +15,7 @@ async def process_single(contract: Dict):
     contract_id = contract.get("Code") or contract.get("code") or contract.get("Name")
     logger.info("start processing contract %s", contract_id)
     await db.aupsert_contract(contract)
-    logger.debug("upserted contract %s", contract_id)
+    # logger.debug("upserted contract %s", contract_id)
     await db.aupdate_status(contract_id, "fetching_link")
     try:
         # 获取文件链接：优先使用 ContractAttachment 字段（可能为逗号分隔的附件名列表），否则回退到 file_id/file_name
@@ -32,9 +32,9 @@ async def process_single(contract: Dict):
             if fid:
                 attachments = [fid]
 
-        logger.info("fetching file url for %s attachments=%s", contract_id, attachments)
+        # logger.info("fetching file url for %s attachments=%s", contract_id, attachments)
         file_meta_map = await external.get_file_url(attachments)
-        logger.info("file_meta_map for %s: %s", contract_id, file_meta_map)
+        # logger.info("file_meta_map for %s: %s", contract_id, file_meta_map)
         # 取第一个有效的 download_url
         file_url = None
         preview_url = None
@@ -45,7 +45,7 @@ async def process_single(contract: Dict):
                 break
         if not file_url:
             raise RuntimeError(f"no file url for contract {contract_id}")
-        logger.info("found file_url for %s: %s", contract_id, file_url)
+        # logger.info("found file_url for %s: %s", contract_id, file_url)
         await db.aupdate_status(contract_id, "parsing", file_url=file_url, preview_url=preview_url)
 
         # 调用解析服务 B（先上传再触发 workflow），得到文本与 upload_file_id
@@ -59,7 +59,7 @@ async def process_single(contract: Dict):
             text = parse_res
             upload_id = None
             pdf_path = None
-        logger.info("parse result for %s upload_id=%s text_len=%s", contract_id, upload_id, (len(text) if text else 0))
+        # logger.info("parse result for %s upload_id=%s text_len=%s", contract_id, upload_id, (len(text) if text else 0))
         await db.aupdate_status(
             contract_id,
             "ai_pending",
@@ -102,7 +102,7 @@ async def _worker_task(item: Dict):
 async def process_contracts(limit: int = 100, query: Dict | None = None):
     # 拉取合同列表（分页/替换为真实接口）
     items = await external.list_contracts(limit, query=query)
-    logger.info("fetched %d contracts to process", len(items))
+    # logger.info("fetched %d contracts to process", len(items))
     # upsert 并并发处理
     tasks = [asyncio.create_task(_worker_task(it)) for it in items]
     await asyncio.gather(*tasks)
