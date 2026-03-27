@@ -39,16 +39,22 @@ async def parser_url(payload: ParserUrlPayload):
         filename = file_url.split("/")[-1] or "file.pdf"
         files = {"file": (filename, content, "application/pdf")}
         try:
-            resp = await client.post(parser_api, files=files)
+            # increase timeout for parser POST (files may be large)
+            resp = await client.post(parser_api, files=files, timeout=120.0)
             resp.raise_for_status()
             j = resp.json()
             result = j.get("data", {}).get("content_list.json")
             return {"result": result}
         except httpx.HTTPStatusError as e:
-            logging.exception("parser API error %s", parser_api)
+            # log response body if available for debugging
+            try:
+                body = e.response.text
+            except Exception:
+                body = None
+            logging.exception("parser API status error %s status=%s body=%s", parser_api, getattr(e.response, 'status_code', None), body)
             raise HTTPException(status_code=502, detail=f"parser api error: {e}")
         except Exception as e:
-            logging.exception("parser proxy failed")
+            logging.exception("parser proxy failed: %s", e)
             raise HTTPException(status_code=502, detail=str(e))
 
 @app.on_event("startup")
